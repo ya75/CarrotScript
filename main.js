@@ -1,8 +1,8 @@
 import { world, system, ItemStack } from "@minecraft/server";
 import { ActionFormData, MessageFormData, ModalFormData } from '@minecraft/server-ui';
-import {AVLTree} from './modules/avl.js';
+import {AVLTree} from './modules/avl.js'; // AVLTreeについては、海外の方のモノをお借りした都合で、uploadはしません！
 
-var c = world.getDimension("overworld");
+var c = world.getDimension("overworld"); // 記述を簡略化する為です
 
 var carrots = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
 const clickItemId = "minecraft:compass";
@@ -46,7 +46,7 @@ var glow_berries = [];
 var spawncarrot = [];
 var spawncarrot2 = [];
 
-function HoldItem(player) {
+function HoldItem(player) { // 今手にしているアイテムを返します
     return player.getComponent("inventory").container.getItem(player.selectedSlot);
 }
 
@@ -96,7 +96,7 @@ function exitwatch(player) {
     try{player.runCommand(`tag @s remove watch`)} catch(e) {};
 }
 
-function rad(deg) {
+function rad(deg) { // degree(度)で与えられた角度の情報を単位をradianにして返します
     return deg/180*Math.PI;
 }
 
@@ -194,13 +194,13 @@ function prepare() {
     ruby.lockMode = "inventory";
 }
 
-function resetCooltime(player) {
+function resetCooltime(player) { // 死亡したときなどに、Cooltimeの更新を止めます
     try{player.runCommand(`scoreboard players set @s cooltime 0`)} catch(e) {};
     if(player.updatect!=undefined)system.clearRun(player.updatect);
     player.updatect = undefined;
 }
 
-function updataCooltime(player, tick, p) {
+function updataCooltime(player, tick, p) { // updateCooltimeの初期化(?)みたいなもので、本体はupdataCooltimeHelperの方です
     try{player.runCommand(`scoreboard players set @s cooltime ${Math.floor(tick/20)}`)} catch(e) {};
     updataCooltimeHelper(player, tick, p);
 }
@@ -216,34 +216,34 @@ function updataCooltimeHelper(player, tick, p) {
     return;
 }
 
-function getRI(min, max) {
+function getRI(min, max) { // min以上max以下の整数を返します
     return min + Math.floor(Math.random() *(max-min+1));
 }
 
-function notTeam(p1, p2) {
+function notTeam(p1, p2) { // ある2人の情報が与えられたときに、同じチームか?を返します
     if(p1==undefined || p2==undefined) return false;
     return !((p1.hasTag("red") && p2.hasTag("red")) || (p1.hasTag("blue") && p2.hasTag("blue")));
 }
 
-function tellraw(target, rawtext) {
+function tellraw(target, rawtext) { // tellrawを簡単にするために作りました 使用例です: tellraw("@a", `ぎゃー！`);
     try{c.runCommand(`tellraw ${target} {"rawtext":[{"text":"${rawtext}"}]}`)} catch(e) {};
 }
 
-function score(target, object) {
+function score(target, object) { // scoreを簡単に取得する為の関数です
     if(target.scoreboardIdentity==undefined) return 0;
     return world.scoreboard.getObjective(object).getScore(target.scoreboardIdentity);
 }
 
-function floor2(value) {
+function floor2(value) { // valueの絶対値があまりにも小さいときに、0とみなします
     if(value>0) return (value >= 0.0001) ? value : 0;
     else return (value <= -0.0001) ? value : 0;
 }
 
 world.afterEvents.itemUse.subscribe(({source, itemStack}) => {
-    if(itemStack.typeId === clickItemId) {
+    if(itemStack.typeId === clickItemId) { // コンパスです
         menu1(source);
     }
-    else if(itemStack.typeId === clickItemId2 && source.hasTag("trick")) {
+    else if(itemStack.typeId === clickItemId2 && source.hasTag("trick")) { // 時計です
         try{source.runCommand(`clear @s clock`)} catch(e) {};
         if(!source.pcount>=100) source.getComponent("inventory").container.addItem(clock);
         if(source.pasti!=undefined) if(source.pcount>=100) {
@@ -257,7 +257,7 @@ world.afterEvents.itemUse.subscribe(({source, itemStack}) => {
             }, 300)
             //tellraw("@a", `${source.lclock}`);
         }
-    } else if(itemStack.typeId === "minecraft:dragon_breath" && source.hasTag("pharm")) {
+    } else if(itemStack.typeId === "minecraft:dragon_breath" && source.hasTag("pharm")) { // 魔法のビンです
         var check = 0;
         try{check = source.runCommand(`testfor @s[hasitem={item=carrot,quantity=20..}]`).successCount} catch(e) {};
         if(check) {
@@ -270,7 +270,7 @@ world.afterEvents.itemUse.subscribe(({source, itemStack}) => {
                 source.lcomp = undefined;
             }, 300) // comp の由来はcompounding です
         }
-    } else if(source.hasTag("ansatu") && itemStack.typeId === "ya7:ruby") if(source.haigeki==undefined) {
+    } else if(source.hasTag("ansatu") && itemStack.typeId === "ya7:ruby") if(source.haigeki==undefined) { // ルビーです
         var players;
         if(source.hasTag("red")) players = world.getDimension("overworld").getPlayers({
             location: source.location,
@@ -287,38 +287,36 @@ world.afterEvents.itemUse.subscribe(({source, itemStack}) => {
         if(players.length!=0) {
             var check = 0;
             const sourceRotation = players[0].getRotation();
-            const theta = (-1)*rad(sourceRotation.y);
-            let phi;
+            const theta = (-1)*rad(sourceRotation.y); // 水平方向の角度[rad]です
+            let phi; // 下の探索が終わった時に、最終的に飛ぶ座標として、使います
             for(let ddir=0; ddir>=-45; ddir-=15) {
                 phi = rad(ddir);
                 for(let i=1; i<=4; i++) {
                     check = 0;
                     for(let j=0; j<thro.length; j++) {
-                        //players[0].runCommand(`particle minecraft:balloon_gas_particle ~${floor2((-1)*Math.sin(theta)*Math.cos(phi)*i)} ~${floor2((-1)*Math.sin(phi)*i+1)} ~${floor2((-1)*Math.cos(theta)*Math.cos(phi)*i)}`);
+                        // 視点の情報から三次元極座標の変換をして、飛べる座標の候補(0度, 15度, 30度, 45度の4通り)の探索をしています
                         try{check += players[0].runCommand(`testforblock ~${floor2((-1)*Math.sin(theta)*Math.cos(phi)*i)} ~${floor2((-1)*Math.sin(phi)*i+1)} ~${floor2((-1)*Math.cos(theta)*Math.cos(phi)*i)} ${thro[j]}`).successCount} catch(e) {};
-                        //let b = c.getBlock({x: floor2((-1)*Math.sin(theta)*Math.cos(phi)*i), y: floor2((-1)*Math.sin(phi)*i+1), z:floor2((-1)*Math.cos(theta)*Math.cos(phi)*i)}).typeId;
-                        //tellraw("ya75jp", `${b}`);
                     }
                     if(!check) break;
                 }
-                if(check) break;
+                if(check) break; // 今のddirの場所に飛べるなら(phiを今の値のままにする為に(?))打ち切ります
             }
             try{source.runCommand(`clear @s ya7:ruby`)} catch(e) {};
-            if(!check) source.runCommand(`kill @s`);
+            if(!check) source.runCommand(`kill @s`); // もし候補が全て不可能なら自信をキルします
             else {
                 players[0].runCommand(`tp @a[name="${source.nameTag}"] ~${floor2((-1)*Math.sin(theta)*Math.cos(phi)*2)} ~${floor2((-1)*Math.sin(phi)*2+1)} ~${floor2((-1)*Math.cos(theta)*Math.cos(phi)*2)} facing ~ ~1 ~`);
                 const effects = source.getEffects();
                 let value = -1;
                 let duration = 0;
-                for(let element of effects) {
+                for(let element of effects) { // 今ついているエフェクトを全て調べます
                     if(element.typeId=="strength") {
                         value = element.amplifier;
                         duration = element.duration;
                     }
                 }
-                source.runCommand(`effect @s strength 3 ${value+1} false`);
+                source.runCommand(`effect @s strength 3 ${value+1} false`); // エフェクトを上書きする仕組みです
                 if(value>=0 && duration>60) source.conPower = system.runTimeout(function() {
-                    source.addEffect("strength", duration-60, {amplifier: value, showParticles: true});
+                    source.addEffect("strength", duration-60, {amplifier: value, showParticles: true}); // 3秒後、もともとついていたエフェクトに戻します
                     source.conPower = undefined;
                 }, 60)
                 source.haigeki = 1500;
@@ -335,7 +333,7 @@ world.afterEvents.itemUse.subscribe(({source, itemStack}) => {
 var heir;
 var _match = 0;
 system.runInterval(function() {
-    for(let i=carrots.length-1; i>=0; i--) {
+    for(let i=carrots.length-1; i>=0; i--) { // 納品するときに、インベントリに入るニンジンの数が高々2^12個なのを利用して、高速で処理しています
         try{c.runCommand(`execute as @a[tag=red,tag=redc,hasitem={item=carrot,quantity=${carrots[i]}..}] run scoreboard players add "red_carrot" count ${carrots[i]}`)} catch(e) {};
         try{c.runCommand(`execute as @a[tag=red,tag=redc,hasitem={item=carrot,quantity=${carrots[i]}..}] run scoreboard players add @s carrot ${carrots[i]}`)} catch(e) {};
         try{c.runCommand(`execute as @a[tag=blue,tag=bluec,hasitem={item=carrot,quantity=${carrots[i]}..}] run scoreboard players add "blue_carrot" count ${carrots[i]}`)} catch(e) {};
@@ -364,9 +362,9 @@ system.runInterval(function() {
         if(player.hasTag("suc") && player.heir==undefined) {
             var check = 0;
             try{check = player.runCommand(`execute if score "gamerun" count matches 3 run testfor @s[hasitem={item=nether_star,quantity=0}]`).successCount} catch(e) {};
-            if(check) heir.push(player);
+            if(check) heir.push(player); // ネザースターを使った(持っていない)場合、後継する人の候補に入れます
         }
-        if(player.hasTag("fight")) {
+        if(player.hasTag("fight")) { // 格闘家のダメージカウントです
             if(player.damagec==undefined) player.damagec=[];
             if(player.dc==undefined) player.dc = 0;
             if(_match-200>=0) {
@@ -387,7 +385,7 @@ system.runInterval(function() {
             if(count > 0) player.runCommand(`effect @s slowness 1 ${count-1} true`);
             player.weight = count;
         }
-        if(player.hasTag("ansatu")) {
+        if(player.hasTag("ansatu")) { // 暗殺者の背襲のクールを減らします
             if(player.haigeki!=undefined) player.haigeki--;
             if(player.haigeki==0) player.haigeki = undefined;
         }
@@ -395,11 +393,11 @@ system.runInterval(function() {
     if(heir.length>=2) {
         for(let i=0; i<heir.length; i++) {
             heir[i].getComponent("inventory").container.addItem(star);
-        }
-    } else if(heir.length==1) {
+        } // 後継者の候補が2人以上の場合は、こっそりネザースターを返却しています
+    } else if(heir.length==1) { // 後継者の候補が1人ならば、
         //players = world.getPlayers();
         players.forEach((player) => {
-            if(player.hasTag("heired")) {
+            if(player.hasTag("heired")) { // player.jsonファイルでインタラクトを受けた人にheiredタグを付けているので、それを使っています
                 var del = "";
                 if(heir[0].hasTag("red")) del = "§c";
                 else if(heir[0].hasTag("blue")) del = "§9";
@@ -421,7 +419,7 @@ system.runInterval(function() {
 }, 1);
 
 system.runInterval(function() {
-    var players = world.getPlayers();
+    var players = world.getPlayers(); // 白兎の時を戻す能力の部分です。ほとんどAVLTreeでの処理をしています
     players.forEach((player) => {
         if(player.hasTag("trick") && !player.hasTag("death")) {
             if(player.pasti==undefined) {
@@ -441,11 +439,11 @@ system.runInterval(function() {
     })
 }, 1)
 
-function int(value) {
+function int(value) { // 記述の簡略化の為です
     return Math.floor(value);
 }
 
-function hascarrot(player) {
+function hascarrot(player) { // hasitemを用いた二分探索で持っているニンジンの数を取得する関数です
     if(player.hasTag("join")) {
         var mi = 0;
         var ma = 2304;
@@ -464,7 +462,7 @@ function hascarrot(player) {
     }
 }
 
-system.runInterval(function() {
+system.runInterval(function() { // さきほどのhascarrot関数はここで使われています
     if(rarmors.length==0) prepare();
     var players = world.getPlayers();
     players.forEach((player) => {
@@ -617,11 +615,6 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
                 prepare();
             }
         break;
-        /*case 'ya7:ateberries': 
-            {
-                tellraw("ya75jp", `ベリー補充`)
-            }
-        break;*/
         case 'ya7:setlore':
             {
                 const m = message.split(/\\n/);
@@ -809,14 +802,12 @@ world.afterEvents.entityHurt.subscribe((ev) => {
                     break;
                 }
                 let b = world.getDimension("overworld").getBlock({x: l.x, y: l.y, z: l.z}).typeId;
-                //tellraw("@a", `${b}`);
                 for(let j=0; j<thro.length; j++) {
                     if(thro[j]==b) {
                         br = false;
                     }
                 }
                 if(br) {
-                    //tellraw("@a", `${Math.floor(i/2)}`)
                     hurtEntity.applyDamage(Math.floor(i/2), {cause: "fall"});
                     break;
                 }
@@ -885,27 +876,7 @@ world.afterEvents.itemReleaseUse.subscribe((ev) => {
     }
 })
 
-//建築用です
-world.afterEvents.entityHitBlock.subscribe((ev) => {
-    const {damagingEntity, hitBlock} = ev;
-    const item = HoldItem(damagingEntity);
-    if(damagingEntity.hasTag("build")) {
-        if(item.typeId=="build:stick" && item.nameTag=="set") {
-            if(damagingEntity.isSneaking) damagingEntity.set = [];
-            if(damagingEntity.set==undefined) damagingEntity.set = [];
-            damagingEntity.set.push(hitBlock.location);
-            damagingEntity.runCommand(`tellraw @s {"rawtext":[{"text":"§l§8≪ §7Added to set §c(${Math.floor(l.x)}, ${Math.floor(l.y)},  ${Math.floor(l.z)})§8[${damagingEntity.set.length}]"}]}`)
-        }
-        if(item.typeId=="build:wooden_axe" && item.nameTag=="choice") {
-            if(damagingEntity.set.length==2) {
-                damagingEntity.choice = hitBlock;
-                damagingEntity.runCommand(`tellraw @s {"rawtext":[{"text":"§l§8≪ §7Chose a block, ${hitBlock.typeId}"}]}`);
-            }
-        }
-    }
-})
-
-
+// 剣士のベリーの回復はここでしています
 world.afterEvents.itemCompleteUse.subscribe((ev) => {
     const {itemStack, source, useDuration} = ev;
     if(itemStack.typeId=="ya7:sweet_berries") {
