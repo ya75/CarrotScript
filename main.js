@@ -1,6 +1,6 @@
 import { world, system, ItemStack } from "@minecraft/server";
 import { ActionFormData, MessageFormData, ModalFormData } from '@minecraft/server-ui';
-import {AVLTree} from './modules/avl.js'; // AVLTreeについては、海外の方のモノをお借りした都合で、uploadはしません！
+import {AVLTree} from './modules/avl.js'; // AVLTreeについては、海外の方のモノをお借りした都合で、uploadはしません！(すみません; ;)
 
 var c = world.getDimension("overworld"); // 記述を簡略化する為です
 
