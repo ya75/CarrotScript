@@ -33,7 +33,7 @@ const thro_block = [
     "minecraft:light_block"
 ];
  
-// ローリングハッシュ 
+// ローリングハッシュ -->
 // 例えば、採掘者のメテオで貫通できるブロックか？を高速で判定するために、貫通可能なブロック群(上のthro_block)をハッシュで数値化したものをAVLTreeに入れることで、
 // そこそこ高い確率で正しい判定が可能になります。この前計算を施すことで、N=(thro_block配列の長さ) とすると、判定問題ごとの計算量はO(N)から概ねO(logN)に改善されます。
 const CharaParm = {a: 0, b: 1, c: 2, d: 3, e: 4, f: 5, g: 6, h: 7, i: 8, j: 9, k: 10, l: 11, m: 12, n: 13, o: 14, p: 15, q: 16, r: 17, s: 18, t: 19, u: 20, v: 21, w: 22, x: 23, y: 24, z: 25};
@@ -98,6 +98,7 @@ const memo_effect = [
 ];
 
 // 重複無しエフェクト (純粋なエフェクトコマンドに対して、損をしない付与の仕方をしたい、という考えの基です)
+// -->
 function effect_init(player) {
     for(const element of memo_effect) {
         player[element] = new AVLTree();
@@ -142,7 +143,7 @@ function effect_update(player) {
         if(max == undefined) continue;
         if(deleting.length >= 1) effect_apply(player, element, max.key, max.date); // 変更があったときのみ最大のエフェクトを付与します
     }
-}
+// <--
 
 // 人baseの向いている方向側(?)にplayerがいるか判定します
 function judge_front(base, player) {
