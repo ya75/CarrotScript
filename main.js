@@ -1,10 +1,10 @@
 import { world, system, ItemStack } from "@minecraft/server";
 import { ActionFormData, MessageFormData, ModalFormData } from '@minecraft/server-ui';
-import {AVLTree} from './modules/avl.js'; // AVLTreeについては、海外の方のモノをお借りした都合で、uploadはしません！(すみません；；)
+import {AVLTree} from './modules/avl.js'; // AVLTreeについては、https://learnersbucket.com/tutorials/data-structures/avl-tree-in-javascript/#google_vignette のサイトのものを改造しました
 
 const c = world.getDimension("overworld"); // 記述を簡略化する為です
 
-var carrots = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
+const carrots = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024];
 const clickItemId = "minecraft:compass";
 const clickItemId2 = "minecraft:clock";
 
@@ -12,10 +12,13 @@ const itemMaxUse = 1e7*20; // ショットガンの最大で使用できる(？)
 const kbMul = 4.0; // 役職フクロウで飛ぶ威力の倍率です
 const reg_term = 40;
 
+let gameInfo;
+let contestInfo = new AVLTree();
+
 var rarmors = [];
 var barmors = [];
 var items = [];
-const thro = [
+const thro_block = [
     "minecraft:air",
     "minecraft:ladder",
     "minecraft:red_flower",
@@ -26,24 +29,52 @@ const thro = [
     "minecraft:chain",
     "minecraft:scaffolding",
     "minecraft:structure_void",
-    "minecraft:double_plant"
+    "minecraft:double_plant",
+    "minecraft:light_block"
 ];
-const roleName = [
-    "§l§c兵士",
-    "§l§g採掘者",
-    "§l§6弓兵",
-    "§l§a後継者",
-    "§l§b剣士",
-    "§l§2木こり",
-    "§l§f白兎",
-    "§l§d薬師",
-    "§l§c格闘家",
-    "§l§7骸骨",
-    "§l§4暗殺者",
-    "§l§j重剣士",
-    "§l§e狩人",
-    "§l§t梟(ふくろう)",
-    "§l§q盗人"
+ 
+// ローリングハッシュ 
+// 例えば、採掘者のメテオで貫通できるブロックか？を高速で判定するために、貫通可能なブロック群(上のthro_block)をハッシュで数値化したものをAVLTreeに入れることで、
+// そこそこ高い確率で正しい判定が可能になります。この前計算を施すことで、N=(thro_block配列の長さ) とすると、判定問題ごとの計算量はO(N)から概ねO(logN)に改善されます。
+const CharaParm = {a: 0, b: 1, c: 2, d: 3, e: 4, f: 5, g: 6, h: 7, i: 8, j: 9, k: 10, l: 11, m: 12, n: 13, o: 14, p: 15, q: 16, r: 17, s: 18, t: 19, u: 20, v: 21, w: 22, x: 23, y: 24, z: 25};
+CharaParm[":"] = 26;
+CharaParm["_"] = 27;
+
+const p = 1000003, B = 30;
+function hash(str) {
+    let res = 0, beki = 1;
+    for(let i=0; i<str.length; i++) {
+        res += beki*(CharaParm[str[i]]+1);
+        beki *= B;
+        res %= p;
+        beki %= p;
+    }
+    return res;
+}
+//<--
+
+let thro = new AVLTree();
+for(const element of thro_block) {
+    thro.insert(hash(element));
+}
+
+const roleInfo = [
+    {name: "§l§c兵士", tag: "warrior", object: "warrior"},
+    {name: "§l§g採掘者", tag: "", object: "saikutu"},
+    {name: "§l§6弓兵", tag: "archer", object: "archer"},
+    {name: "§l§a後継者", tag: "suc", object: "suc"},
+    {name: "§l§b剣士", tag: "sword", object: "sword"},
+    {name: "§l§2木こり", tag: "", object: "kikori"},
+    {name: "§l§f白兎", tag: "trick", object: "rabbit"},
+    {name: "§l§d薬師", tag: "pharm", object: "pharm"},
+    {name: "§l§c格闘家", tag: "fight", object: "fighter"},
+    {name: "§l§7骸骨", tag: "gaikotu", object: "gaikotu"},
+    {name: "§l§4暗殺者", tag: "ansatu", object: "ansatu"},
+    {name: "§l§j重剣士", tag: "hwarrior", object: "hwarrior"},
+    {name: "§l§e狩人", tag: "kariudo", object: "kariudo"},
+    {name: "§l§t梟(ふくろう)", tag: "hukurou", object: "hukurou"},
+    {name: "§l§q盗人", tag: "thief", object: "thief"},
+    {name: "§l§6猫又", tag: "nekomata", object: "nekomata"}
 ];
 
 const specArea = [
@@ -53,64 +84,132 @@ const specArea = [
     {x1: -93, y1: 26, z1: 565, x2: 93, y2: -50, z2: 379},
     {x1: 12, y1: -22, z1: 601, x2: -12, y2: -46, z2: 558},
     {x1: -12, y1: -46, z1: 386, x2: 12, y2: -20, z2: 343},
+    {x1: -235, y1: -25, z1: 251, x2: -124, y2: -53, z2: 110}
 ]
+
+const raincheck = [
+    {dx: 0, dz: 0}
+];
+
+const memo_effect = [
+    "strength",
+    "regeneration",
+    "speed"
+];
+
+// 重複無しエフェクト (純粋なエフェクトコマンドに対して、損をしない付与の仕方をしたい、という考えの基です)
+function effect_init(player) {
+    for(const element of memo_effect) {
+        player[element] = new AVLTree();
+    }
+}
+
+function effect_apply(player, effect_name, amplifier, tick) {
+    var pre = player[effect_name].find(amplifier);
+    var max = player[effect_name].max();
+    if(tick<=0) return;
+    if(max == undefined) {
+        player[effect_name].insert(amplifier, tick);
+        player.addEffect(effect_name, tick, {amplifier: amplifier, showParticles: true});
+        return;
+    }
+    if(pre != undefined) {
+        if(pre.date <= tick) {
+            pre.date = tick;
+            if(max.key <= amplifier) {
+                player.addEffect(effect_name, tick, {amplifier: amplifier, showParticles: true});
+            }
+        }
+    } else {
+        player[effect_name].insert(amplifier, tick);
+        if(max.key <= amplifier) {
+            player.addEffect(effect_name, tick, {amplifier: amplifier, showParticles: true});
+        }
+    }
+    return;
+}
+
+function effect_update(player) {
+    for(const element of memo_effect) {
+        let deleting = [];
+        const func = (node) => {
+            if(node.date == 0) deleting.push(node.key);
+            node.date--;
+        }
+        player[element].update(func);
+        for(const elm of deleting) player[element].delete(elm);
+        const max = player[element].max();
+        if(max == undefined) continue;
+        if(deleting.length >= 1) effect_apply(player, element, max.key, max.date); // 変更があったときのみ最大のエフェクトを付与します
+    }
+}
+
+// 人baseの向いている方向側(?)にplayerがいるか判定します
+function judge_front(base, player) {
+    const rot = base.getRotation();
+    const theta = rad(rot.y), phi = rad(rot.x);
+    const offset = base.location, p = player.location;
+    const dp = {x: p.x-offset.x, y: p.y-offset.y, z: p.z-offset.z}; // (DynamicProgramingの略ではなくて、)デルタpの略です。射出された位置と今検査しているプレイヤーの人の位置の差を格納します
+    const Rp = Math.sqrt(dp.x*dp.x+dp.y*dp.y+dp.z*dp.z), cosThetap = dp.z/Rp, sinThetap = (-1)*dp.x/Rp, cosPhip = Math.sqrt(dp.x*dp.x+dp.z*dp.z)/Rp, sinPhip = (-1)*dp.y/Rp; // このチェックで、使う数値を前計算しておきます
+    const Naiseki = (cosThetap*cosPhip*Math.cos(theta)*Math.cos(phi)+sinThetap*cosPhip*Math.sin(theta)*Math.cos(phi)+sinPhip*Math.sin(phi));
+    if(!(Naiseki>=0)) return false;
+    return true;
+}
+
 var star;
 var berries;
 var clock;
 var magic;
 var ruby;
+var kohakutou;
 var glow_berries = [];
 var spawncarrot = [];
 var spawncarrot2 = [];
+var raintime = 0;
+var rainsystem = undefined;
+
+//線形合同法(に近いモノ(?))による乱数生成-->
+//この方のサイトを参考にしました https://computing2.vdslab.jp/docs/random/lcg
+let seed = 1;
+function random() {
+    const a = 48271;
+    const m = 2147483647;
+    const q = int(m/a);
+    const r = m%a;
+    const hi = int(seed/q);
+    const lo = seed%q;
+    const test = a*lo - r*hi;
+    if(test>0) {
+        seed = test;
+    } else {
+        seed = test+m;
+    }
+    return seed/m;
+}
+//<--
 
 function HoldItem(player) { // 手にしているアイテムを返します
     return player.getComponent("inventory").container.getItem(player.selectedSlot);
 }
 
-function menu1(player) {
-    var players = world.getPlayers();
-    var playerl = [];
-    var playerp = [];
-    players.forEach((player) => {
-        if(player.hasTag("join")){
-            if(player.hasTag("red")) {
-                playerl.push("§l§c"+player.nameTag);
-                playerp.push(player.nameTag);
-            } else if(player.hasTag("blue")) {
-                playerl.push("§l§9"+player.nameTag);
-                playerp.push(player.nameTag);
-            }
-        }
-    })
-    playerl.push("観戦をやめる");
-    new ModalFormData()
-    .title("観戦する人を、選んでください")
-    .dropdown("観戦をやめる を選択で戻れます", playerl)
-    .show(player).then((res) => {
-        if(res.isCanceled == true) return;
-        if(res.formValues[0]!=playerp.length) {
-            var check = 0;
-            try{check = c.runCommand(`testfor @a[name="${playerp[res.formValues[0]]}",tag=join]`).successCount} catch(e) {};
-            if(check) {
-                player.watch = playerp[res.formValues[0]];
-                try{player.runCommand(`tellraw @s {"rawtext":[{"text":"§l§8≫ §7${playerl[res.formValues[0]]}さんを観戦します"}]}`)} catch(e) {};
-                try{player.runCommand(`inputpermission set @s movement disabled`)} catch(e) {};
-            } else return;
-        } else {
-            exitwatch(player);
-            return;
-        }
-    })
+function toukei(player) {
+    new MessageFormData()
+    .title("統計")
+    .body(`参加回数 ${score(player, "Tjoined")}\n総キル数 ${score(player, "Tkill")}\n総デス数 ${score(player, "Tdeath")}\n総納品数 ${score(player, "Tcarrot")}\n総強奪数 ${score(player, "Tsteal")}`)
+    .button1("OK")
+    .show(player).then((Response) => {
+        if(Response.selection == 0) return;
+    });
 }
 
-function exitwatch(player) {
-    try{player.runCommand(`tellraw @s {"rawtext":[{"text":"§l§8≫ §7観戦を終了しました"}]}`)} catch(e) {};
-    player.watch = undefined;
-    try{player.runCommand(`clear @s compass`)} catch(e) {};
-    try{player.runCommand(`camera @s clear`)} catch(e) {};
-    try{player.runCommand(`inputpermission set @s movement enabled`)} catch(e) {};
-    try{player.runCommand(`tp @s 0 -48 0 0 0`)} catch(e) {};
-    try{player.runCommand(`tag @s remove watch`)} catch(e) {};
+function syuukeishow(player, text) {
+    new MessageFormData()
+    .title("コンテスト情報")
+    .body(text)
+    .button1("OK")
+    .show(player).then((Response) => {
+        if(Response.selection == 0) return;
+    });
 }
 
 function prepare() {
@@ -205,6 +304,9 @@ function prepare() {
     block = world.getDimension("overworld").getBlock({x: -21, y: -48, z: 34}).getComponent("inventory").container;
     ruby = block.getItem(0);
     ruby.lockMode = "inventory";
+    block = world.getDimension("overworld").getBlock({x: -26, y: -48, z: 34}).getComponent("inventory").container;
+    kohakutou = block.getItem(0);
+    kohakutou.lockMode = "inventory";
 }
 
 function rad(deg) {
@@ -225,12 +327,12 @@ function updateCooltime(player, tick, p) {
 function BulletCoolHelper(player) {
     const bullet = score(player, "bullet");
     if(bullet<16) {
-        updateCooltime(player, 40, 20);
+        updateCooltime(player, 10, 10);
         player.lbullet = system.runTimeout(function() {
             const bulletnow = score(player, "bullet");
             player.runCommand(`scoreboard players set @s bullet ${Math.min(bulletnow+1, 16)}`);
             player.lbullet = undefined;
-        }, 40)
+        }, 10)
     }
 }
 
@@ -240,7 +342,7 @@ function BulletSouten(player) {
         player.runCommand(`scoreboard players set @s bulletSouten ${Math.min(bulletSouten+1, 8)}`);
         player.runCommand(`scoreboard players remove @s bullet 1`);
         player.lsouten = undefined;
-    }, 10)
+    }, 2)
 }
 
 // クールタイムの表示を更新する為の関数です
@@ -255,7 +357,7 @@ function updateCooltimeHelper(player, tick, p) {
 }
 
 function getRI(min, max) {
-    return min + Math.floor(Math.random() *(max-min+1));
+    return min + Math.floor(random() *(max-min+1));
 }
 
 function notTeam(p1, p2) {
@@ -277,10 +379,13 @@ function dist(p1, p2) { // 返される値は実際の距離の二乗である�
 }
 
 function is_air(x, y, z) {
-    for(let i=0; i<thro.length; i++) {
+    if(y<-64) return false;
+    const block_id = c.getBlock({x: x, y: y, z: z}).typeId;
+    return thro.find(hash(block_id)) != undefined;
+    /*for(let i=0; i<thro.length; i++) {
         if(c.runCommand(`testforblock ${x} ${y} ${z} ${thro[i]}`).successCount) return true;
     }
-    return false;
+    return false;*/
 }
 
 function floor2(value) {
@@ -311,6 +416,7 @@ function inSpecArea(player) {
 }
 
 world.afterEvents.itemUse.subscribe(({source, itemStack}) => {
+    tellraw("@a[tag=debug]", `${itemStack.typeId}`);
     if(itemStack.typeId === clickItemId) {
         menu1(source);
     }
@@ -318,7 +424,7 @@ world.afterEvents.itemUse.subscribe(({source, itemStack}) => {
         try{source.runCommand(`clear @s clock`)} catch(e) {};
         if(!source.pcount>=100) source.getComponent("inventory").container.addItem(clock);
         if(source.pasti!=undefined) if(source.pcount>=100) {
-            source.tryTeleport(source.pasti.min().location, {rotation: source.pasti.min().rotate});
+            source.tryTeleport(source.pasti.min().date.location, {rotation: source.pasti.min().date.rotate});
             source.pasti = undefined;
             source.pcount = undefined;
             updateCooltime(source, 300, 20);
@@ -341,7 +447,7 @@ world.afterEvents.itemUse.subscribe(({source, itemStack}) => {
                 source.lcomp = undefined;
             }, 300) // comp の由来はcompounding です
         }
-    } else if(source.hasTag("ansatu") && itemStack.typeId === "ya7:ruby") if(source.haigeki==undefined) {
+    } else if(source.hasTag("ansatu") && itemStack.typeId === "ya7:ruby" && source.haigeki==undefined) {
         var players;
         if(source.hasTag("red")) players = world.getDimension("overworld").getPlayers({
             location: source.location,
@@ -372,7 +478,7 @@ world.afterEvents.itemUse.subscribe(({source, itemStack}) => {
                 }
                 if(check) break;
             }
-            try{source.runCommand(`clear @s ya7:ruby`)} catch(e) {};
+            source.runCommand(`clear @s ya7:ruby`);
             if(!check) {
                 source.runCommand(`kill @s`);
                 tellraw("@a[tag=debug]", `ルビー誤爆`);
@@ -384,7 +490,7 @@ world.afterEvents.itemUse.subscribe(({source, itemStack}) => {
                     const item = source.getComponent("inventory").container.getItem(i);
                     if(item!=undefined) if(item.typeId== "ya7:iron_sword") source.selectedSlot=i;
                 }} catch(e) {};
-                const effects = source.getEffects();
+                /*const effects = source.getEffects();
                 let value = -1;
                 let duration = 0;
                 for(let element of effects) {
@@ -397,27 +503,63 @@ world.afterEvents.itemUse.subscribe(({source, itemStack}) => {
                 if(value>=0 && duration>60) source.conPower = system.runTimeout(function() {
                     source.addEffect("strength", duration-60, {amplifier: value, showParticles: true});
                     source.conPower = undefined;
-                }, 60)
-                source.haigeki = 1500;
-                updateCooltime(source, 1500, 20);
+                }, 60)*/
+                let appllying = [];
+                const func = (node) => {
+                    appllying.push({amplifier: node.key+1, tick: Math.min(60, node.date)});
+                }
+                source["strength"].update(func);
+                for(const elm of appllying) effect_apply(source, "strength", elm.amplifier, elm.tick);
+                effect_apply(source, "strength", 0, 60);
+                source.haigeki = 900;
+                updateCooltime(source, 900, 20);
                 source.lruby = system.runTimeout(function() {
                     source.getComponent("inventory").container.addItem(ruby);
                     source.lruby = undefined;
-                }, 1500)
+                }, 900)
             }
         }
+    } else if(source.hasTag("nekomata") && itemStack.typeId == "ya7:kohakutou") /*if(source.kohakutou==undefined)*/ {
+        tellraw("@a[tag=debug]", `使用`);
+        var players;
+        if(source.hasTag("red")) players = world.getDimension("overworld").getPlayers({
+            location: source.location,
+            maxDistance: 4,
+            excludeGameModes: ["spectator"],
+            excludeTags: ["blue"]
+        });
+        if(source.hasTag("blue")) players = world.getDimension("overworld").getPlayers({
+            location: source.location,
+            maxDistance: 4,
+            excludeGameModes: ["spectator"],
+            excludeTags: ["red"]
+        });
+        for(const player of players) effect_apply(player, "regeneration", 9, 80);
+        source.runCommand(`clear @s ya7:kohakutou`);
+        source.runCommand(`particle ya7:health ${source.location.x} ${source.location.y} ${source.location.z}`);
+        updateCooltime(source, 900, 20);
+        source.lkohakutou = system.runTimeout(function() {
+            source.getComponent("inventory").container.addItem(kohakutou);
+            source.lkohakutou = undefined;
+        }, 900)
     }
 })
 
 var heir;
 var _match = 0;
 let gamerun;
+let now_stage;
 system.runInterval(function() {
+    random();
     for(let i=carrots.length-1; i>=0; i--) {
         try{c.runCommand(`execute as @a[tag=red,tag=redc,hasitem={item=carrot,quantity=${carrots[i]}..}] run scoreboard players add "red_carrot" count ${carrots[i]}`)} catch(e) {};
         try{c.runCommand(`execute as @a[tag=red,tag=redc,hasitem={item=carrot,quantity=${carrots[i]}..}] run scoreboard players add @s carrot ${carrots[i]}`)} catch(e) {};
+        try{c.runCommand(`execute as @a[tag=red,tag=redc,hasitem={item=carrot,quantity=${carrots[i]}..}] run scoreboard players add @s Tcarrot ${carrots[i]}`)} catch(e) {};
+        try{c.runCommand(`execute as @a[tag=red,tag=redc,hasitem={item=carrot,quantity=${carrots[i]}..}] run scoreboard players add @s point ${carrots[i]}`)} catch(e) {};
         try{c.runCommand(`execute as @a[tag=blue,tag=bluec,hasitem={item=carrot,quantity=${carrots[i]}..}] run scoreboard players add "blue_carrot" count ${carrots[i]}`)} catch(e) {};
         try{c.runCommand(`execute as @a[tag=blue,tag=bluec,hasitem={item=carrot,quantity=${carrots[i]}..}] run scoreboard players add @s carrot ${carrots[i]}`)} catch(e) {};
+        try{c.runCommand(`execute as @a[tag=blue,tag=bluec,hasitem={item=carrot,quantity=${carrots[i]}..}] run scoreboard players add @s Tcarrot ${carrots[i]}`)} catch(e) {};
+        try{c.runCommand(`execute as @a[tag=blue,tag=bluec,hasitem={item=carrot,quantity=${carrots[i]}..}] run scoreboard players add @s point ${carrots[i]}`)} catch(e) {};
         try{c.runCommand(`clear @a[tag=red,tag=redc,hasitem={item=carrot,quantity=${carrots[i]}..}] carrot 0 ${carrots[i]}`)} catch(e) {};
         try{c.runCommand(`clear @a[tag=blue,tag=bluec,hasitem={item=carrot,quantity=${carrots[i]}..}] carrot 0 ${carrots[i]}`)} catch(e) {};
     }
@@ -429,13 +571,28 @@ system.runInterval(function() {
     const blue_alive = world.scoreboard.getObjective("count").getScore("blue_alive");
     const blue_carrot = world.scoreboard.getObjective("count").getScore("blue_carrot");
     gamerun = world.scoreboard.getObjective("count").getScore("gamerun");
+    now_stage = world.scoreboard.getObjective("count").getScore("now_stage");
     if(gamerun==3) {
+        if(_match==0) {
+            gameInfo = new AVLTree();
+            const players = world.getPlayers();
+            for(const player of players) {
+                if(player.hasTag("join")) {
+                    if(player.hasTag("red")) gameInfo.insert(player.id, {role: player.role, team: "red"});
+                    if(player.hasTag("blue")) gameInfo.insert(player.id, {role: player.role, team: "blue"});
+                    c.runCommand(`scoreboard players add ${roleInfo[player.role].object} Tselect 1`);
+                    player.runCommand(`scoreboard players add @s Tjoined 1`);
+                }
+            }
+        }
         _match++;
         try{c.runCommand(`execute as @a[tag=!redc,tag=!bluec] run scoreboard players reset @s catch_time`)} catch(e) {};
         try{c.runCommand(`execute as @a[tag=blue,tag=redc] if score "red_carrot" count matches 1.. run scoreboard players add @s catch_time 1`)} catch(e) {};
         try{c.runCommand(`execute as @a[tag=red,tag=bluec] if score "blue_carrot" count matches 1.. run scoreboard players add @s catch_time 1`)} catch(e) {};
         try{c.runCommand(`execute as @a[tag=blue,tag=redc,scores={catch_time=20},tag=!thief] run give @s carrot ${Math.min(10, red_carrot)}`)} catch(e) {};
         try{c.runCommand(`execute as @a[tag=red,tag=bluec,scores={catch_time=20},tag=!thief] run give @s carrot ${Math.min(10, blue_carrot)}`)} catch(e) {};
+        try{c.runCommand(`execute as @a[tag=blue,tag=redc,scores={catch_time=20},tag=!thief] run scoreboard players add @s Tsteal ${Math.min(10, red_carrot)}`)} catch(e) {};
+        try{c.runCommand(`execute as @a[tag=red,tag=bluec,scores={catch_time=20},tag=!thief] run scoreboard players add @s Tsteal ${Math.min(10, blue_carrot)}`)} catch(e) {};
         try{c.runCommand(`execute as @a[tag=blue,tag=redc,scores={catch_time=20},tag=!thief] run scoreboard players remove "red_carrot" count ${Math.min(10, red_carrot)}`)} catch(e) {};
         try{c.runCommand(`execute as @a[tag=red,tag=bluec,scores={catch_time=20},tag=!thief] run scoreboard players remove "blue_carrot" count ${Math.min(10, blue_carrot)}`)} catch(e) {};
         try{c.runCommand(`execute as @a[tag=!thief] run scoreboard players operation @s catch_time %= "n20" num`)} catch(e) {};
@@ -444,15 +601,34 @@ system.runInterval(function() {
         try{c.runCommand(`effect @a[tag=blue,tag=bluec] wither 0 0`)} catch(e) {};
         try{c.runCommand(`tag @a[tag=!thief] remove redc`)} catch(e) {};
         try{c.runCommand(`tag @a[tag=!thief] remove bluec`)} catch(e) {};
+
+        if(now_stage==2) {
+            if(raintime==0) {
+                if(getRI(1, 5000)==1) {
+                    tellraw("@a[tag=join]", `§l§c[！]警報 §dもうすぐダメージ付きの大雨が降ります`);
+                    tellraw("@a[tag=weather]", `§l§c[！]警報 §dもうすぐダメージ付きの大雨が降ります`);
+                    rainsystem = system.runTimeout(function() {
+                        c.runCommand(`weather rain`);
+                        c.runCommand(`time set sunset`);
+                        raintime = getRI(1500, 2000);
+                        rainsystem = undefined;
+                    }, 100);
+                }
+            } else {
+                if(raintime==1) {
+                c.runCommand(`time set noon`);
+                c.runCommand(`weather clear`);
+                }
+                raintime--;
+            }
+        }
     }
-    if(gamerun==3) {
         heir = [];
         var players = world.getPlayers();
         const template = `\ue108§l§7[${red_alive}] §6${red_carrot}\ue107    \ue109§7[${blue_alive}] §6${blue_carrot}\ue107  §f\ue10b${timem}:${times}\n`;
         players.forEach((player) => {
-            player.titleStack = template;
-            player.titleStack += `\ue106 ${score(player, "kill")}  \ue10a ${score(player, "death")}  \ue10c ${score(player, "hascarrot")}`;
-            
+            if(player["strength"] == undefined) effect_init(player);
+            effect_update(player);
             if(player.hasTag("join")) {
                 const effects = player.getEffects();
                 let flag = false;
@@ -461,89 +637,125 @@ system.runInterval(function() {
                         player.runCommand(`playanimation @s animation.invisibility none 100000000000000`);
                         player.invisibilityFlag = true;
                         flag = true;
+                        if(player.hasTag("red")) {
+                            if(_match%10==0) player.runCommand(`particle minecraft:basic_flame_particle ~ ~1.2 ~`);
+                        } else if(player.hasTag("blue")) {
+                            if(_match%10==0) player.runCommand(`particle minecraft:blue_flame_particle ~ ~1.2 ~`);
+                        }
                     }
                 }
                 if(!flag && player.invisibilityFlag!=undefined) {
                     player.runCommand(`playanimation @s animation.invisibility none 0`);
                     player.invisibilityFlag = undefined;
                 }
-            }
-            if(player.hasTag("warrior")) {
-                player.titleStack += `  \ue10d ${score(player, "cooltime")}`;
-            }
-            if(player.hasTag("archer")) {
-                player.titleStack += `  \ue10d ${score(player, "cooltime")}`;
-            }
-            if(player.hasTag("suc") && player.heir==undefined) {
-                var check = 0;
-                try{check = player.runCommand(`execute if score "gamerun" count matches 3 run testfor @s[hasitem={item=nether_star,quantity=0}]`).successCount} catch(e) {};
-                if(check) heir.push(player);
-            }
-            if(player.hasTag("sword")) {
-                player.titleStack += `  \ue10d ${score(player, "cooltime")}`;
-            }
-            if(player.hasTag("trick")) {
-                player.titleStack += `  \ue10d ${score(player, "cooltime")}`;
-            }
-            if(player.hasTag("pharm")) {
-                player.titleStack += `  \ue10d ${score(player, "cooltime")}`;
-            }
-            if(player.hasTag("fight")) {
-                if(player.damagec==undefined) player.damagec=[];
-                if(player.dc==undefined) player.dc = 0;
-                if(_match-200>=0) {
-                    if(player.damagec[_match-200]!=undefined) {
-                        player.dc -= player.damagec[_match-200];
-                        player.damagec[_match-200] = undefined;
+                if(_match%20==0) if(now_stage==2 && raintime>0) {
+                    let flag = false;
+                    for(let i=player.location.y+1; i<=-26; i++) {
+                        for(let p of raincheck) {
+                            /*let flag2 = false;
+                            for(let q of thro) {
+                                if(world.getDimension("overworld").getBlock({x: player.location.x+p.dx, y: i, z: player.location.z+p.dz}).typeId==q) {
+                                    flag2 = true;
+                                }
+                            }*/
+                            if(!is_air(player.location.x+p.dx, i, player.location.z+p.dz)) {
+                                flag = true;
+                                break;
+                            }
+                        }
+                    }
+                    if(!flag) {
+                        player.applyDamage(2, {cause: "magic"});
                     }
                 }
-                player.titleStack += `  \ue10e ${Math.floor(player.dc)}`;
             }
-            if(player.hasTag("hwarrior")) { //重戦士
-                if(player.weight == undefined) player.weight = 0;
-                const equips = player.getComponent("equippable");
-                let count = 0;
-                if(equips.getEquipment("Chest") != undefined) count++;
-                if(equips.getEquipment("Legs") != undefined) count++;
-                if(equips.getEquipment("Feet") != undefined) count++;
-                if(player.weight > count) player.runCommand(`effect @s slowness 0 0 true`);
-                if(count > 0) player.runCommand(`effect @s slowness 1 ${count-1} true`);
-                player.weight = count;
+            if(contestInfo.find(player.id) == undefined) {
+                contestInfo.insert(player.id, {nameTag: player.nameTag, point: score(player, "point")});
+            } else {
+                contestInfo.find(player.id).date.point = score(player, "point");
             }
-            if(player.hasTag("ansatu")) {
-                if(player.haigeki!=undefined) player.haigeki--;
-                if(player.haigeki==0) player.haigeki = undefined;
-                player.titleStack += `  \ue10d ${score(player, "cooltime")}`;
-            }
-            if(player.addDamage != undefined) {
-                player.applyDamage(player.addDamage);
-                player.addDamage = undefined;
-            }
-            if(player.hasTag("kariudo")) {
-                if(player.isSneaking) {
-                    player.addEffect("slow_falling", 4, {amplifier: 0, showParticles: true});
+            if(player.kabotya!=undefined) player.kabotya--;
+            if(player.kabotya==0) player.kabotya=undefined;
+            if(gamerun==3) {
+                player.titleStack = template;
+                player.titleStack += `\ue106 ${score(player, "kill")}  \ue10a ${score(player, "death")}  \ue10c ${score(player, "hascarrot")}`;
+                
+                if(player.hasTag("warrior")) {
+                    player.titleStack += `  \ue10d ${score(player, "cooltime")}`;
                 }
-                const bullet = score(player, "bullet");
-                const bulletSouten = score(player, "bulletSouten");
-                if(bullet<16) {
-                    if(player.lbullet==undefined) BulletCoolHelper(player);
+                if(player.hasTag("archer")) {
+                    player.titleStack += `  \ue10d ${score(player, "cooltime")}`;
                 }
-                if(bulletSouten<8 && bullet>=1) {
-                    if(player.lsouten==undefined && player.lrensya==undefined) BulletSouten(player);
+                if(player.hasTag("suc") && player.heir==undefined) {
+                    var check = 0;
+                    try{check = player.runCommand(`execute if score "gamerun" count matches 3 run testfor @s[hasitem={item=nether_star,quantity=0}]`).successCount} catch(e) {};
+                    if(check) heir.push(player);
                 }
-                player.titleStack += `  \ue10f §u${score(player, "bulletSouten")}§7/${score(player, "bullet")}`;
-            }
-            if(player.hasTag("hukurou")) {
-                player.titleStack += `  \ue10d ${score(player, "cooltime")}`;
-            }
-            if(player.hasTag("thief")) {
-                if(gamerun==3) {
+                if(player.hasTag("sword")) {
+                    player.titleStack += `  \ue10d ${score(player, "cooltime")}`;
+                }
+                if(player.hasTag("trick")) {
+                    player.titleStack += `  \ue10d ${score(player, "cooltime")}`;
+                }
+                if(player.hasTag("pharm")) {
+                    player.titleStack += `  \ue10d ${score(player, "cooltime")}`;
+                }
+                if(player.hasTag("fight")) {
+                    if(player.damagec==undefined) player.damagec=[];
+                    if(player.dc==undefined) player.dc = 2;
+                    if(_match-200>=0) {
+                        if(player.damagec[_match-200]!=undefined) {
+                            player.dc -= player.damagec[_match-200];
+                            player.damagec[_match-200] = undefined;
+                        }
+                    }
+                    player.titleStack += `  \ue10e ${Math.floor(player.dc)}`;
+                }
+                if(player.hasTag("hwarrior")) { //重戦士
+                    if(player.weight == undefined) player.weight = 0;
+                    const equips = player.getComponent("equippable");
+                    let count = 0;
+                    if(equips.getEquipment("Chest") != undefined) count++;
+                    if(equips.getEquipment("Legs") != undefined) count++;
+                    if(equips.getEquipment("Feet") != undefined) count++;
+                    if(player.weight > count) player.runCommand(`effect @s slowness 0 0 true`);
+                    if(count > 0) player.runCommand(`effect @s slowness 1 ${count-1} true`);
+                    player.weight = count;
+                }
+                if(player.hasTag("ansatu")) {
+                    if(player.haigeki!=undefined) player.haigeki--;
+                    if(player.haigeki==0) player.haigeki = undefined;
+                    player.titleStack += `  \ue10d ${score(player, "cooltime")}`;
+                }
+                if(player.addDamage != undefined) {
+                    player.applyDamage(player.addDamage, {cause: "entityAttack"});
+                    player.addDamage = undefined;
+                }
+                if(player.hasTag("kariudo")) {
+                    /*if(player.isSneaking) {
+                        player.addEffect("slow_falling", 4, {amplifier: 0, showParticles: true});
+                    }*/
+                    const bullet = score(player, "bullet");
+                    const bulletSouten = score(player, "bulletSouten");
+                    if(bullet<16) {
+                        if(player.lbullet==undefined) BulletCoolHelper(player);
+                    }
+                    if(bulletSouten<8 && bullet>=1) {
+                        if(player.lsouten==undefined && player.lrensya==undefined) BulletSouten(player);
+                    }
+                    player.titleStack += `  \ue10f §u${score(player, "bulletSouten")}§7/${score(player, "bullet")}`;
+                }
+                if(player.hasTag("hukurou")) {
+                    player.titleStack += `  \ue10d ${score(player, "cooltime")}`;
+                }
+                if(player.hasTag("thief")) {
                     const jukuren = score(player, "jukuren");
                     if(player.hasTag("blue") && player.hasTag("redc")) {
                         if(red_carrot>=1) {
                             try{player.runCommand(`execute as @s[scores={catch_time=20}] run scoreboard players add @s jukuren 1`)} catch(e) {};
                         }
                         try{player.runCommand(`execute as @s[scores={catch_time=20}] run give @s carrot ${Math.min(jukuren, red_carrot)}`)} catch(e) {};
+                        try{player.runCommand(`execute as @s[scores={catch_time=20}] run scoreboard players add @s Tsteal ${Math.min(jukuren, red_carrot)}`)} catch(e) {};
                         try{player.runCommand(`execute as @s[scores={catch_time=20}] run scoreboard players remove "red_carrot" count ${Math.min(jukuren, red_carrot)}`)} catch(e) {};
                     } else if(player.hasTag("red") && player.hasTag("bluec")) {
                         if(blue_carrot>=1) {
@@ -551,12 +763,43 @@ system.runInterval(function() {
                         }
                         try{player.runCommand(`execute as @s[scores={catch_time=20}] run scoreboard players remove "blue_carrot" count ${Math.min(jukuren, blue_carrot)}`)} catch(e) {};
                         try{player.runCommand(`execute as @s[scores={catch_time=20}] run give @s carrot ${Math.min(jukuren, blue_carrot)}`)} catch(e) {};
+                        try{player.runCommand(`execute as @s[scores={catch_time=20}] run scoreboard players add @s Tsteal ${Math.min(jukuren, blue_carrot)}`)} catch(e) {};
                     }
                     try{player.runCommand(`scoreboard players operation @s catch_time %= "n20" num`)} catch(e) {};
                     try{player.runCommand(`tag @s remove redc`)} catch(e) {};
                     try{player.runCommand(`tag @s remove bluec`)} catch(e) {};
+                    player.titleStack += `  \ue110 §u${score(player, "jukuren")}`;
                 }
-                player.titleStack += `  \ue110 §u${score(player, "jukuren")}`;
+                if(player.hasTag("kabotya")) {
+                    for(const element of players) {
+                        const eft = element.getEffects();
+                        let flag = false;
+                        for(let eftelement of eft) {
+                            if(eftelement.typeId == "invisibility") {
+                                flag = true;
+                            }
+                        }
+                        if(element.kabotya == undefined && flag) continue;
+                        if((player.hasTag("red") && element.hasTag("red")) || (player.hasTag("blue") && element.hasTag("blue"))) {
+                            if(dist(player.location, element.location) <= 1) if(HoldItem(element) == undefined) element.addEffect("invisibility", 4, {amplifier: 1, showParticles: true});
+                        }
+                        element.kabotya=4;
+                    }
+                }
+                if(player.hasTag("nekomata")) {
+                    for(const element of world.getDimension("overworld").getPlayers({
+                        location: player.location,
+                        maxDistance: 1,
+                        excludeGameModes: ["spectator"],
+                        tags: [player.hasTag("red") ? "red" : "blue"]
+                    })) {
+                        if(element.id == player.id) continue;
+                        effect_apply(element, "regeneration", 1, 1);
+                    }
+                    player.titleStack += `  \ue10d ${score(player, "cooltime")}`;
+                }
+                player.runCommand(`titleraw @s actionbar {"rawtext":[{"text":"${player.titleStack}"}]}`);
+                tellraw("@a[tag=budeg]", `${player.titleStack}`);
             }
             if(player.hasTag("watch")) {
                 if(inSpecArea(player)) {
@@ -574,10 +817,6 @@ system.runInterval(function() {
                 } else {
                     player.backLobby = undefined;
                 }
-            }
-            if(gamerun==3) {
-                player.runCommand(`titleraw @s actionbar {"rawtext":[{"text":"${player.titleStack}"}]}`);
-                tellraw("@a[tag=budeg]", `${player.titleStack}`);
             }
         })
         if(heir.length>=2) {
@@ -616,7 +855,7 @@ system.runInterval(function() {
                     if(player.pcount>=100) {
                         player.pasti.delete(player.pcount-100);
                     }
-                    player.pasti.insert(player.pcount, player.location, player.getRotation());
+                    player.pasti.insert(player.pcount, {location: player.location, rotate: player.getRotation()});
                     player.pcount++;
                     //let info = player.pasti.min();
                     //try{player.runCommand(`tellraw @s {"rawtext":[{"text":"${info.key}, ${info.height}, {x: ${info.location.x}, y: ${info.location.y}, z:${info.location.z}}, {${info.rotate}}"}]}`)} catch(e) {};
@@ -626,32 +865,34 @@ system.runInterval(function() {
 
         for(const player of players) {
             if(player.damaged == undefined) player.damaged = reg_term;
-            player.damaged--;
+            const effects = player.getEffects();
+            let flag = false;
+            for(let element of effects) {
+                if(element.typeId == "wither") {
+                    flag = true;
+                }
+            }
+           if(!flag) player.damaged--;
             if(player.damaged == 0) {
                 const health = player.getComponent("health");
                 if(health.effectiveMax >= health.currentValue+1) health.setCurrentValue(health.currentValue+1);
                 player.damaged = reg_term;
             }
         }
-    }
 }, 1);
-
-system.runInterval(function() {
-    var players = world.getPlayers();
-}, 1)
 
 function int(value) {
     return Math.floor(value);
 }
 
-function hascarrot(player) {
+function itemCount(player, itemId) {
     if(player.hasTag("join")) {
         var mi = 0;
         var ma = 2304;
         for(let i=0; i<12; i++) {
             var check = 0;
             var mid = int((mi+ma)/2);
-            try{check = player.runCommand(`testfor @s[hasitem={item=carrot,quantity=${int(mid)}..}]`).successCount} catch(e) {};
+            try{check = player.runCommand(`testfor @s[hasitem={item=${itemId},quantity=${int(mid)}..}]`).successCount} catch(e) {};
             if(check) {
                 mi = mid;
             } else {
@@ -663,12 +904,27 @@ function hascarrot(player) {
     }
 }
 
+function itemDrop(location, itemId, amount) {
+    for(let i=0; i<36; i++) {
+        if(amount>=65) {
+            amount-=64;
+            try{c.spawnItem(new ItemStack(itemId, 64), {x: location.x, y: location.y, z: location.z})} catch(e) {}; //spawncarrot2[6]は64個のニンジンのデータ
+        } else break;
+    }
+    for(let i=6; i>=0; i--) {
+        if(amount>=carrots[i]) {
+            amount-=carrots[i];
+            try{c.spawnItem(new ItemStack(itemId, carrots[i]), {x: location.x, y: location.y, z:location.z})} catch(e) {}; //spawncarrot2[i]は2^i個のニンジンのデータ
+        }
+    }
+}
+
 system.runInterval(function() {
     if(rarmors.length==0) prepare();
     var players = world.getPlayers();
     players.forEach((player) => {
         if(player.hasTag("join")) {
-            try{player.runCommand(`scoreboard players set @s hascarrot ${hascarrot(player)}`)} catch(e) {};
+            try{player.runCommand(`scoreboard players set @s hascarrot ${itemCount(player, "carrot")}`)} catch(e) {};
         }
     })
 }, 20)
@@ -684,7 +940,7 @@ system.runInterval(function() {
     });
 }, 1)
 
-var equip_slot = [
+const equip_slot = [
     "Head",
     "Chest",
     "Legs",
@@ -693,6 +949,46 @@ var equip_slot = [
 system.afterEvents.scriptEventReceive.subscribe((ev) => {
     const {id, sourceEntity, message} = ev;
     switch(id) {
+        case 'ya7:syuukeishow': {
+            /*const scores = world.scoreboard.getObjective(message).getScores();
+            for(const element of scores) {
+                tellraw("@a[tag=debug]", `${element.participant.displayName}, ${element.participant.id}, ${element.score}`);
+            }*/
+            let syuukei = [];
+            const func = (node) => {
+                syuukei.push({nameTag: node.date.nameTag, point: node.date.point});
+            }
+            contestInfo.update(func);
+            syuukei.sort((a, b) => {
+                if(a.point > b.point) return -1;
+                else if(a.point < b.point) return 1;
+                return 0;
+            });
+
+            syuukei[0].order = 1;
+            for(let i=1; i<syuukei.length; i++) {
+                if(syuukei[i].point == syuukei[i-1].point) syuukei[i].order = syuukei[i-1].order;
+                else syuukei[i].order = i+1;
+            }
+
+            let mi = 0;/*, ma = syuukei.length-1, mid, mypoint = score(sourceEntity, "point");
+            while(mi != ma-1) {
+                Math.floor(mid = (mi+ma)/2);
+                if(syuukei[mid].point < mypoint) {
+                    mi = mid;
+                } else {
+                    ma = mid;
+                }
+            }*/
+
+            let text = `あなたのポイント: ${score(sourceEntity, "point")}\n現在の順位: ${mi}/${syuukei.length}\n`;
+            for(let i=0; i<syuukei.length; i++) {
+                text += `\n${syuukei[i].order} ${syuukei[i].nameTag} ${syuukei[i].point}ポイント`;
+            }
+
+            syuukeishow(sourceEntity, text);
+        }
+        break;
         case 'ya7:coolCate':
             const itemStack = new ItemStack("minecraft:shield");
             const cdCategory = itemStack.getComponent("minecraft:cooldown").cooldownCategory; 
@@ -703,7 +999,6 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
             players.forEach((player) => {
                 tellraw("@a[tag=debug]", `${player.nameTag} ${sourceEntity.nameTag} ${(HoldItem(player)!=undefined) ? HoldItem(player).nameTag : undefined}`);
                 if(player.nameTag == sourceEntity.nameTag) {
-                    tellraw("@a[tag=debug]", `through`);
                     system.runTimeout(function() {
                         HoldItem(player).nameTag = message;
                     }, 40)
@@ -754,12 +1049,13 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
         break;
         case 'ya7:role':
             sourceEntity.role = Number(message);
-            try{sourceEntity.runCommand(`tellraw @s {"rawtext":[{"text":"§l§8≫ §7あなたは${roleName[Number(message)]}§7を選びました"}]}`)} catch(e) {};
+            try{sourceEntity.runCommand(`tellraw @s {"rawtext":[{"text":"§l§8≫ §7あなたは${roleInfo[Number(message)].name}§7を選びました"}]}`)} catch(e) {};
+            if(gamerun == 3) c.runCommand(`scoreboard players add ${roleInfo[Number(message)].object} Tselect 1`);
+            if(roleInfo[Number(message)].tag != "") try{sourceEntity.runCommand(`tag @s add ${roleInfo[Number(message)].tag}`)} catch(e) {};
         break;
         case 'ya7:reset':
             {
                 _match = 0;
-                try{c.runCommand(`camera @a clear`)} catch(e) {};
                 var players = world.getPlayers();
                 players.forEach((player) => {
                     player.heir = undefined;
@@ -799,12 +1095,24 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
                         system.clearRun(player.lbullet);
                     }
                     player.lbullet = undefined;
+                    if(player.lkohakutou!=undefined) {
+                        system.clearRun(player.lkohakutou)
+                    }
+                    effect_init(player);
                 })
+
+                if(rainsystem != undefined) {
+                    system.clearRun(rainsystem);
+                }
+                rainsystem = undefined;
+                c.runCommand(`time set noon`);
+                c.runCommand(`weather clear`);
+                raintime = 0;
             }
         break;
         case 'ya7:carrot':
             const l = message.split(' ');
-            try{c.spawnItem(spawncarrot[getRI(1, 4)], {x: Number(l[0]), y: Number(l[1]), z: Number(l[2])})} catch(e) {};
+            try{c.spawnItem(spawncarrot[getRI(1, 4)], {x: Number(l[0])+0.5, y: Number(l[1]), z: Number(l[2])+0.5})} catch(e) {};
         break;
         case 'ya7:heir':
             {
@@ -841,11 +1149,6 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
                 prepare();
             }
         break;
-        /*case 'ya7:ateberries': 
-            {
-                tellraw("ya75jp", `ベリー補充`)
-            }
-        break;*/
         case 'ya7:setlore':
             {
                 const m = message.split(/\\n/);
@@ -864,19 +1167,61 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
                 }, 100)
             }
         break;
+        case 'ya7:givekohakutou':
+            {
+                updateCooltime(sourceEntity, 100, 20);
+                system.runTimeout(function() {
+                    sourceEntity.getComponent("inventory").container.addItem(kohakutou);
+                }, 100)
+            }
+        break;
         case 'ya7:bulletCool':
             {
                 BulletCoolHelper(sourceEntity);
             }
         break;
-        case 'ya7:arror_reload':
+        case 'ya7:totyuu':
+            {
+                sourceEntity.runCommand(`scoreboard players add @s Tjoined 1`);
+                if(gameInfo.find(sourceEntity.id) != undefined) {
+                    sourceEntity.runCommand(`scriptevent ya7:role ${gameInfo.find(sourceEntity.id).date.role}`);
+                    sourceEntity.runCommand(`tag @s add join`)
+                    sourceEntity.runCommand(`function totyuu`);
+                    c.runCommand(`scoreboard players add ${roleInfo[gameInfo.find(sourceEntity.id).date.role].object} Tselect -1`);
+                    sourceEntity.runCommand(`scoreboard players add @s Tjoined -1`);
+                }
+            }
+        break;
+        case 'ya7:arrow_reload':
             {
                 try{sourceEntity.runCommand(`clear @s arrow`)} catch(e) {};
-                tellraw("@a[tag=debug]", `通過`)
                 updateCooltime(sourceEntity, Number(message), 20);
                 system.runTimeout(function() {
                     try{sourceEntity.runCommand(`execute if score "gamerun" count matches 3 run give @s arrow 1 0 {"item_lock":{"mode":"lock_in_inventory"}}`)} catch(e) {};
                 }, Number(message))
+            }
+        break;
+        case 'ya7:regist':
+            {
+                if(gameInfo.find(sourceEntity.id) == undefined) gameInfo.insert(sourceEntity.id, {role: sourceEntity.role});
+            }
+        break;
+        case 'ya7:showToukei':
+            {
+                toukei(sourceEntity);
+            }
+        break;
+        case 'ya7:switch_stage':
+            {
+                const stage = getRI(0, 2);
+                c.runCommand(`scoreboard players set "now_stage" count ${stage}`);
+                c.runCommand(`clone ${-2-stage} -51 6 ${-2-stage} -51 6 -2 -47 6`);
+            }
+        break;
+        case 'ya7:effect':
+            {
+                const mes = message.split(' ');
+                effect_apply(sourceEntity, mes[0], Number(mes[2]), Number(mes[1])*20);
             }
         break;
     }
@@ -906,24 +1251,35 @@ world.afterEvents.entityDie.subscribe((ev) => {
         if(dd!=undefined) {
             if(dd.nameTag != deadEntity.nameTag) if(notTeam(dd, deadEntity)) {
                 try{dd.runCommand(`scoreboard players add @s kill 1`)} catch(e) {};
+                try{dd.runCommand(`scoreboard players add @s Tkill 1`)} catch(e) {};
+
+                try{dd.runCommand(`scoreboard players add @s point 30`)} catch(e) {};
+
                 if(dd.hasTag("red")) ddl = "§c";
                 else if(dd.hasTag("blue")) ddl = "§9";
             }
+
+            if(dd.hasTag('nekomata')) effect_apply(dd, "speed", 2, 40);
         } else if(deadEntity.ld!=undefined) {
             try{c.runCommand(`scoreboard players add @a[name="${deadEntity.ld}"] kill 1`)} catch(e) {};
+            try{c.runCommand(`scoreboard players add @a[name="${deadEntity.ld}"] Tkill 1`)} catch(e) {};
+            
+            try{c.runCommand(`scoreboard players add @a[name="${deadEntity.ld}"] point 30`)} catch(e) {};
+
             if(deadEntity.hasTag("red")) ddl = "§9";
             else if(deadEntity.hasTag("blue")) ddl = "§c";
         }
         try{deadEntity.runCommand(`scoreboard players add @s death 1`)} catch(e) {};
-        let count = 0;
-        for(let i=carrots.length-1; i>=0; i--) {
-            let check = false;
-            try{check = c.runCommand(`testfor @a[name="${deadEntity.nameTag}",hasitem={item=carrot,quantity=${carrots[i]}..}]`).successCount} catch(e) {};
-            if(check) {
-                count+=carrots[i];
-                try{deadEntity.runCommand(`clear @s carrot 0 ${carrots[i]}`)} catch(e) {};
-            }
-        }
+        try{deadEntity.runCommand(`scoreboard players add @s Tdeath 1`)} catch(e) {};
+        let count = itemCount(deadEntity, "carrot"), g1=itemCount(deadEntity, "ya7:glow_berries1"), g2=itemCount(deadEntity, "ya7:glow_berries2"), g3=itemCount(deadEntity, "ya7:glow_berries3");
+        deadEntity.runCommand(`clear @s carrot`);
+        deadEntity.runCommand(`clear @s ya7:glow_berries1`);
+        deadEntity.runCommand(`clear @s ya7:glow_berries2`);
+        deadEntity.runCommand(`clear @s ya7:glow_berries3`);
+        itemDrop(l, "carrot", count);
+        itemDrop(l, "ya7:glow_berries1", g1);
+        itemDrop(l, "ya7:glow_berries2", g2);
+        itemDrop(l, "ya7:glow_berries3", g3);
         //後継(相続元の人がやられた)-->
             if(deadEntity.heired!=undefined) {
                 tellraw(`@a[name="${deadEntity.heired}"]`, `§l§8≫ ${del}${deadEntity.nameTag} §7さん(相続元)が死亡しました`)
@@ -945,18 +1301,6 @@ world.afterEvents.entityDie.subscribe((ev) => {
                 deadEntity.heired=undefined;
             }
 
-            for(let i=0; i<36; i++) {
-                if(count>=65) {
-                    count-=64;
-                    try{c.spawnItem(spawncarrot2[6], {x: l.x, y: l.y, z: l.z})} catch(e) {}; //spawncarrot2[6]は64個のニンジンのデータ
-                } else break;
-            }
-            for(let i=6; i>=0; i--) {
-                if(count>=carrots[i]) {
-                    count-=carrots[i];
-                    try{c.spawnItem(spawncarrot2[i], {x: l.x, y: l.y, z:l.z})} catch(e) {}; //spawncarrot2[i]は2^i個のニンジンのデータ
-                }
-            }
         //<--
         //後継者がやられた-->
             if(deadEntity.heir!=undefined) {
@@ -987,6 +1331,7 @@ world.afterEvents.entityDie.subscribe((ev) => {
     DeadClearRun(deadEntity, "lberries");
     DeadClearRun(deadEntity, "lcomp");
     DeadClearRun(deadEntity, "lruby");
+    DeadClearRun(deadEntity, "lkohakutou");
     DeadClearRun(deadEntity, "conPower");
     DeadClearRun(deadEntity, "lbullet");
     DeadClearRun(deadEntity, "lsouten");
@@ -994,11 +1339,9 @@ world.afterEvents.entityDie.subscribe((ev) => {
     try{c.spawnItem(spawncarrot[getRI(5, 8)], {x: l.x, y: l.y, z: l.z})} catch(e) {};
     try{deadEntity.runCommand(`clear @s clock`)} catch(e) {};
     try{deadEntity.runCommand(`clear @s ya7:sweet_berries`)} catch(e) {};
-    try{deadEntity.runCommand(`clear @s ya7:glow_berries1`)} catch(e) {};
-    try{deadEntity.runCommand(`clear @s ya7:glow_berries2`)} catch(e) {};
-    try{deadEntity.runCommand(`clear @s ya7:glow_berries3`)} catch(e) {};
     try{deadEntity.runCommand(`clear @s dragon_breath`)} catch(e) {};
     try{deadEntity.runCommand(`clear @s ya7:ruby`)} catch(e) {};
+    try{deadEntity.runCommand(`clear @s ya7:kohakutou`)} catch(e) {};
 
     try{deadEntity.runCommand(`scoreboard players set @s cooltime 0`)} catch(e) {};
     if(deadEntity.hasTag("sword")) deadEntity.getComponent("inventory").container.addItem(berries);
@@ -1013,9 +1356,10 @@ world.afterEvents.entityDie.subscribe((ev) => {
     }
     if(dd!=undefined) if(dd.hasTag("kariudo")) {
         const bullet = score(dd, "bullet");
-        player.runCommand(`scoreboard players set @s bullet ${Math.min(bullet+8, 16)}`);
+        dd.runCommand(`scoreboard players set @s bullet ${Math.min(bullet+8, 16)}`);
     }
     resetCooltime(deadEntity);
+    effect_init(deadEntity);
 })
 
 world.afterEvents.entityHurt.subscribe((ev) => {
@@ -1025,19 +1369,17 @@ world.afterEvents.entityHurt.subscribe((ev) => {
     var useditem = undefined;
     if(hurtEntity.hasTag("fight") && (dcause == "entityAttack" || dcause == "projectile")) {
         if(hurtEntity.damagec[_match] == undefined) hurtEntity.damagec[_match] = damage;
-        else hurtEntity.damagec[_match] += damage; // ダメージが1tick中に二度当たる可能性を考慮しています;
+        else hurtEntity.damagec[_match] += damage; // ダメージが1tick中に二度当たる可能性を考慮しています
         hurtEntity.dc += damage;
     }
-    if(hurtEntity.hasTag("ansatu") && !(dcause == "entityAttack" || dcause == "projectile" || dcause == "fall" || dcause == "wither")) {
+    if(hurtEntity.hasTag("ansatu") && !(dcause == "entityAttack" || dcause == "projectile" || dcause == "fall" || dcause == "wither" || dcause == "magic")) {
         hurtEntity.runCommand(`kill @s`);
-        tellraw("@a[tag=debug]", `環境ダメージ`);
     }
     
     if(dd!=undefined) {
         if(notTeam(dd, hurtEntity)) hurtEntity.ld = dd.nameTag;
-        let GI = dd.getComponent("inventory").container.getItem(dd.selectedSlot)
+        const GI = dd.getComponent("inventory").container.getItem(dd.selectedSlot)
         if(GI!=undefined) useditem = GI.typeId;
-
     }
     let l = hurtEntity.location;
     if(notTeam(dd, hurtEntity)) {
@@ -1049,14 +1391,14 @@ world.afterEvents.entityHurt.subscribe((ev) => {
                 if(!(l.y>=-64)) {
                     break;
                 }
-                let b = world.getDimension("overworld").getBlock({x: l.x, y: l.y, z: l.z}).typeId;
+                //let b = world.getDimension("overworld").getBlock({x: l.x, y: l.y, z: l.z}).typeId;
                 //tellraw("@a", `${b}`);
-                for(let j=0; j<thro.length; j++) {
+                /*for(let j=0; j<thro.length; j++) {
                     if(thro[j]==b) {
                         br = false;
                     }
-                }
-                if(br) {
+                }*/
+                if(!is_air(l.x, l.y, l.z)) {
                     //tellraw("@a", `${Math.floor(i/2)}`)
                     hurtEntity.applyDamage(Math.floor(i/2), {cause: "fall"});
                     break;
@@ -1078,9 +1420,9 @@ world.afterEvents.entityHurt.subscribe((ev) => {
                 excludeTags: ["blue"]
             });
             try{players.forEach((player) => {
-                if(player.nameTag!=hurtEntity.nameTag) {
+                if(!judge_front(dd, player) && player.id!=hurtEntity.id) {
                     player.rangeA = true;
-                    player.applyDamage(2, {cause: "entityAttack", damagingEntity: dd});
+                    player.applyDamage(5, {cause: "entityAttack", damagingEntity: dd});
                 }
             })} catch(e) {};
         } else if(useditem=="ya7:iron_sword" && dd.hasTag("trick")) {
@@ -1102,7 +1444,7 @@ world.afterEvents.entityHurt.subscribe((ev) => {
             hurtEntity.applyKnockback(dx/dl, dz/dl, Math.min(Math.sqrt(dx*dx+dz*dz)*kbMul*0.5, kbMul*0.5), dy);
         } else if(notTeam(hurtEntity, dd) && dd.hasTag("thief")) {
             const jukuren = score(dd, "jukuren");
-            const hascarrotHurt = hascarrot(hurtEntity);
+            const hascarrotHurt = itemCount(hurtEntity, "carrot");
             dd.runCommand(`give @s carrot ${Math.min(hascarrotHurt, jukuren)}`);
             hurtEntity.runCommand(`clear @s carrot 0 ${Math.min(hascarrotHurt, jukuren)}`);
             if(hascarrotHurt>=1) dd.runCommand(`scoreboard players add @s jukuren 1`);
@@ -1136,7 +1478,7 @@ function bulletLimit(offset, theta, phi) { // ある弾がどこまで飛ぶか�
     // そのうえ、細かい調整とか沢山した所為で、メチャ読みにくいコードになっているので、ご注意です；；
     // 実装したアルゴリズムを簡単にご説明すると、銃弾の射出された位置(基準)、角度(横、縦)の情報から、
     // x軸が射出されたところから、+1, +2, ... となったところ(整数値になるように少し調整しています) のブロックが
-    // 貫通可能か?だけを調べれば、(射程が7なので、)高々7回の確認だけで(確認の漏れなく)済むので、それで計算量を抑えた形です
+    // 貫通可能か?だけを調べれば、(射程が7なので、)高々20回の確認だけで(確認の漏れなく)済むので、それで計算量を抑えた形です
     // それを、y方向, z方向についても行っています(そして、基準からの距離が7以上になったら、探索を打ち切るようにしています)
     let res = 20, ma, C, flag;
     C = (-1)*Math.sin(theta)*Math.cos(phi);
@@ -1145,14 +1487,11 @@ function bulletLimit(offset, theta, phi) { // ある弾がどこまで飛ぶか�
         for(let xdr = 0; Math.sin(theta) < 0 ? xdr<=20 : xdr>=-20; Math.sin(theta) < 0 ? xdr++ : xdr--) {
             if(xdr==0) continue;
             const xr = Math.round(offset.x+xdr);
-            //tellraw("@a[tag=debug]", `xr: ${xr}`);
             let kr = (xr-offset.x)/C; // 仮の半径です。極座標変換された方程式x=-sin(theta)cos(phi)*r + offset.x を変形して、xを固定したときのrを求めています
-            //tellraw("@a[tag=debug]", `kr: ${kr}`);
             if(Math.abs(kr)>=20) {
                 ma = Math.max(ma, 20);
                 break;
             }
-            //tellraw("@a[tag=debug]", `offset.x: ${offset.x}, xr: ${xr}, dx: ${xr-offset.x}, theta: ${deg(theta)}, phi: ${deg(phi)}, kr: ${kr}, C: ${C}`);
             const yr = trans3D(theta, phi, kr, "y", offset), zr = trans3D(theta, phi, kr, "z", offset);
             /*system.runInterval(function() {
                 c.runCommand(`particle par:bullet_particle ${xr}.0 ${yr} ${zr}`);
@@ -1182,7 +1521,6 @@ function bulletLimit(offset, theta, phi) { // ある弾がどこまで飛ぶか�
             /*system.runInterval(function() {
                 c.runCommand(`particle minecraft:blue_flame_particle ${xr} ${yr} ${zr}`);
             }, 1)*/
-            //tellraw("@a[tag=debug]", `x: ${xr}, y: ${yr}, z: ${zr}`);
             ma = Math.max(ma, kr);
             for(let element of searchDirection) if(!is_air(xr+element.x, yr+element.y, zr+element.z)) {
                 flag = true;
@@ -1199,7 +1537,6 @@ function bulletLimit(offset, theta, phi) { // ある弾がどこまで飛ぶか�
         for(let zdr = 0; Math.cos(theta) > 0 ? zdr<=20 : zdr>=-20; Math.cos(theta) > 0 ? zdr++ : zdr--) {
             if(zdr==0) continue;
             const zr = Math.round(offset.z+zdr);
-            //tellraw("@a[tag=debug]", `zr: ${zr}`);
             let kr = (zr-offset.z)/C;
             if(Math.abs(kr)>=20) {
                 ma = Math.max(ma, 20);
@@ -1209,7 +1546,6 @@ function bulletLimit(offset, theta, phi) { // ある弾がどこまで飛ぶか�
             /*system.runInterval(function() { 
                 c.runCommand(`particle minecraft:basic_flame_particle ${xr} ${yr} ${zr}.0`);
             }, 1)*/
-            //tellraw("@a[tag=debug]", `x: ${xr}, y: ${yr}, z: ${zr}`);
             ma = Math.max(ma, kr);
             for(let element of searchDirection) if(!is_air(xr+element.x, yr+element.y, zr+element.z)) {
                 flag = true;
@@ -1220,7 +1556,6 @@ function bulletLimit(offset, theta, phi) { // ある弾がどこまで飛ぶか�
         res = Math.min(res, ma);
     }
 
-    tellraw("@a[tag=debug]", `res: ${res}`);
     return res;
 }
 
@@ -1229,7 +1564,7 @@ function hidan(offset, theta, phi, p, hidanR) { // 被弾する可能性のあ�
     const D = (Ca*Ldx+Cb*Ldy+Cc*Ldz)*(Ca*Ldx+Cb*Ldy+Cc*Ldz)-(Ldx*Ldx+Ldy*Ldy+Ldz*Ldz-hidanR*hidanR); // この判別式には導出過程がありますが、長いので省略します
     if(!(D>=0)) return false; // 2次方程式についての判別式が0以上なら、被弾の扱いにします。(そうではないなら、ここでfalseが返ります)
 
-    // 上の判別式での判定は、今判定しているプレイヤーの人が、基準の位置(打った位置)(原点Oと呼びます)に関して銃弾と対象の位置にあったとしても、
+    // 上の判別式での判定は、今判定しているプレイヤーの人が、基準の位置(打った位置)(原点Oと呼びます)に関して銃弾と対称の位置にあったとしても、
     // 通過されてしまうので、ここから先で、Oを基準に、thetaとphiから、ある平面(?)をイメージして、その反対側に人がいる場合は、
     // ダメージを与えないようにします
     // もう少し厳密に言うと、銃弾が通る直線上の任意の点Qと、プレイヤーの人がいる座標Pについて、ベクトルOPとベクトルOQのなす角が90度以下であれば良いです
@@ -1239,7 +1574,7 @@ function hidan(offset, theta, phi, p, hidanR) { // 被弾する可能性のあ�
     // 細かい導出は省略しますが、ベクトルOQとベクトルOPの成分が分かれば、内積を計算できて、どちらも大きさが1なので、
     // cos(角度)QOP = ベクトルOQ(内積)ベクトルOP が計算できます
     // 最終的な判定としては、cos(角度)QOPが0以上であれば良いです
-    const dp = {x: p.x-offset.x, y: p.y-offset.y, z: p.z-offset.z}; // DynamicProgramingの略ではなくて、デルタpの略です。射出された位置と今検査しているプレイヤーの人の位置の差を格納します
+    const dp = {x: p.x-offset.x, y: p.y-offset.y, z: p.z-offset.z}; // (DynamicProgramingの略ではなくて、)デルタpの略です。射出された位置と今検査しているプレイヤーの人の位置の差を格納します
     const Rp = Math.sqrt(dp.x*dp.x+dp.y*dp.y+dp.z*dp.z), cosThetap = dp.z/Rp, sinThetap = (-1)*dp.x/Rp, cosPhip = Math.sqrt(dp.x*dp.x+dp.z*dp.z)/Rp, sinPhip = (-1)*dp.y/Rp; // このチェックで、使う数値を前計算しておきます
     const Naiseki = (cosThetap*cosPhip*Math.cos(theta)*Math.cos(phi)+sinThetap*cosPhip*Math.sin(theta)*Math.cos(phi)+sinPhip*Math.sin(phi));
     if(!(Naiseki>=0)) return false;
@@ -1269,7 +1604,7 @@ function shotgunHelper(offset, theta, phi, team, damager) {
     for(let element of players) {
         const inputLocation = {x: element.location.x, y: element.location.y+1.5, z: element.location.z};
         const inputLocation2 = {x: element.location.x, y: element.location.y+0.6, z: element.location.z};
-        const hidanHead = hidan(offset, theta, phi, inputLocation, 0.3); 
+        const hidanHead = hidan(offset, theta, phi, inputLocation, 0.45); 
         const hidanBody = hidan(offset, theta, phi, inputLocation2, 0.6); 
         if(!hidanHead && !hidanBody) continue;
         const dis = Math.sqrt(dist(inputLocation, offset));
@@ -1288,13 +1623,12 @@ function shotgunHelper(offset, theta, phi, team, damager) {
     }
 
 
-    //tellraw("@a[tag=debug]", `${hidanInfo}`);
     if(hidanInfo=="head") {
         //c.runCommand(`execute as @a[name="${damager}"] at @s anchored eyes run playsound random.anvil_land @s ^ ^ ^0.5 1 1.4`);
     }
     if(hidanPlayer != undefined) {
         if(hidanPlayer.addDamage == undefined) hidanPlayer.addDamage = 0;
-        hidanPlayer.addDamage += Math.min(49/res, hidanInfo=="body" ? 2 : 4);
+        hidanPlayer.addDamage += Math.min(49/res, hidanInfo=="body" ? 3 : 6);
         hidanPlayer.ld = damager; // ダメージを受けたときの変なノックバックなし、かつダメージを与えた人を記録する仕組みとして、この時点でダメージを与えた人を記録することにします
     }
     shotgun(offset, theta, phi, 0, res);
@@ -1302,18 +1636,17 @@ function shotgunHelper(offset, theta, phi, team, damager) {
 
 function apk(source, rot, mul) { // ノックバックを与える関数です(apkは、applyKnockbackの略のつもりです, mulはノックバックの倍率です) 関数の概要としては、ショットガンを撃った反対方向にノックバックさせたいのですが、その強さを計算するときに、水平方向については、x方向とz方向の距離を採っています
     const xr = trans3D(rad(rot.y), rad(rot.x+180), mul, "x", {x: 0, y: 0, z: 0}), yr = trans3D(rad(rot.y), rad(rot.x+180), mul, "y", {x: 0, y: 0, z: 0}), zr = trans3D(rad(rot.y), rad(rot.x+180), mul, "z", {x: 0, y: 0, z: 0});
-    source.applyKnockback(xr, zr, floor2(Math.sqrt(dist({x: 0, y: 0, z: 0}, {x: xr, y: 0, z: zr}))), yr);
+    source.applyKnockback(xr, zr, floor2(Math.sqrt(dist({x: 0, y: 0, z: 0}, {x: xr, y: 0, z: zr}))), yr/1.5);
 }
 
 function randomspreadRI(init, ud) {
-    return getRI(Math.min((-1)*init+ud*10/20, 0), Math.max(init-ud*10/20, 0));
+    return getRI(Math.min((-1)*init+ud*5/30, 0), Math.max(init-ud*5/30, 0));
 }
 
 world.afterEvents.itemReleaseUse.subscribe((ev) => {
     const item = ev.itemStack;
     const {source, useDuration} = ev;
 
-    tellraw("@a[tag=debug]", `${item.typeId}`)
     const ud = Math.abs(itemMaxUse-useDuration);
     if(item.typeId=="ya7:shotgun") {
         const rot = source.getRotation();
@@ -1332,7 +1665,7 @@ world.afterEvents.itemReleaseUse.subscribe((ev) => {
         for(let i=0; i<4; i++) {
             count++;
             if(count>bulletSouten) break;
-            shotgunHelper(location, rad(rot.y+randomspreadRI(15, ud)), rad(rot.x+randomspreadRI(15, ud)), team, source.nameTag);
+            shotgunHelper(location, rad(rot.y+randomspreadRI(5, ud)), rad(rot.x+randomspreadRI(5, ud)), team, source.nameTag);
         }
         source.runCommand(`scoreboard players set @s bulletSouten ${Math.max(bulletSouten-4, 0)}`);
         if(bulletSouten>4) source.lrensya = system.runTimeout(function() {
@@ -1341,7 +1674,7 @@ world.afterEvents.itemReleaseUse.subscribe((ev) => {
             for(let i=0; i<4; i++) {
                 count++;
                 if(count>bulletSouten) break;
-                shotgunHelper(location, rad(rot.y+randomspreadRI(15, ud)), rad(rot.x+randomspreadRI(15, ud)), team, source.nameTag);
+                shotgunHelper(location, rad(rot.y+randomspreadRI(5, ud)), rad(rot.x+randomspreadRI(5, ud)), team, source.nameTag);
             }
             source.runCommand(`scoreboard players set @s bulletSouten ${Math.max(bulletSouten-8, 0)}`);
             source.lrensya = undefined;
@@ -1364,7 +1697,7 @@ world.afterEvents.projectileHitBlock.subscribe((ev) => {
         dy = 0;
     }
     const dl = Math.sqrt(dist(location, sourcel));
-    if(source.hasTag("hukurou") && hascarrot(source) <= 32) {
+    if(source.hasTag("hukurou") && itemCount(source, "carrot") <= 32) {
         source.applyKnockback(dx/dl, dz/dl, Math.min(Math.sqrt(dx*dx+dz*dz)*kbMul, kbMul), dy);
     }
 })
@@ -1496,5 +1829,16 @@ world.afterEvents.entityHitBlock.subscribe((ev) => {
                 }
             }
         }
+    }
+})
+
+
+world.afterEvents.itemCompleteUse.subscribe((ev) => {
+    const {itemStack, source, useDuration} = ev;
+    if(itemStack.typeId=="ya7:sweet_berries") {
+        source.lberries = system.runTimeout(function() {
+            source.getComponent("inventory").container.addItem(berries);
+        }, 1200)
+        updateCooltime(source, 1200, 20);
     }
 })
