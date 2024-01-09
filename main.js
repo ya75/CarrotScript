@@ -51,12 +51,12 @@ function hash(str) {
     }
     return res;
 }
-//<--
 
 let thro = new AVLTree();
 for(const element of thro_block) {
     thro.insert(hash(element));
 }
+//<--
 
 const roleInfo = [
     {name: "§l§c兵士", tag: "warrior", object: "warrior"},
