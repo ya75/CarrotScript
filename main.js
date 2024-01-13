@@ -143,6 +143,7 @@ function effect_update(player) {
         if(max == undefined) continue;
         if(deleting.length >= 1) effect_apply(player, element, max.key, max.date); // 変更があったときのみ最大のエフェクトを付与します
     }
+}
 // <--
 
 // 人baseの向いている方向側(?)にplayerがいるか判定します
