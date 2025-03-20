@@ -1,2 +1,2 @@
 # CarrotScript
-サーバーで使っているscriptの一部です
+サーバーで使っているscriptのコードです
